@@ -15,12 +15,27 @@ function resolveProfileUnusableUntil(stats: ProfileUsageStats): number | null {
 
 /**
  * Check if a profile is currently in cooldown (due to rate limiting or errors).
+ * When modelId is provided, checks model-specific cooldown first (for rate_limit errors).
+ * Falls back to profile-level cooldown for non-model-specific errors.
  */
-export function isProfileInCooldown(store: AuthProfileStore, profileId: string): boolean {
+export function isProfileInCooldown(store: AuthProfileStore, profileId: string, modelId?: string): boolean {
   const stats = store.usageStats?.[profileId];
   if (!stats) {
     return false;
   }
+  // Always check disabledUntil (billing errors apply to entire profile)
+  if (stats.disabledUntil && Date.now() < stats.disabledUntil) {
+    return true;
+  }
+  // If modelId is provided, check model-specific cooldown only
+  if (modelId) {
+    const modelStats = stats.models?.[modelId];
+    if (modelStats?.cooldownUntil) {
+      return Date.now() < modelStats.cooldownUntil;
+    }
+    return false;
+  }
+  // No modelId: check profile-level cooldown
   const unusableUntil = resolveProfileUnusableUntil(stats);
   return unusableUntil ? Date.now() < unusableUntil : false;
 }
@@ -201,6 +216,8 @@ function computeNextProfileUsageStats(params: {
 /**
  * Mark a profile as failed for a specific reason. Billing failures are treated
  * as "disabled" (longer backoff) vs the regular cooldown window.
+ * When modelId is provided with rate_limit reason, only that specific model is
+ * put into cooldown, allowing other models to continue working.
  */
 export async function markAuthProfileFailure(params: {
   store: AuthProfileStore;
@@ -208,8 +225,42 @@ export async function markAuthProfileFailure(params: {
   reason: AuthProfileFailureReason;
   cfg?: OpenClawConfig;
   agentDir?: string;
+  modelId?: string;
 }): Promise<void> {
-  const { store, profileId, reason, agentDir, cfg } = params;
+  const { store, profileId, reason, agentDir, cfg, modelId } = params;
+
+  // For rate_limit with modelId, use per-model cooldown
+  if (reason === "rate_limit" && modelId) {
+    const updater = (freshStore: AuthProfileStore): boolean => {
+      if (!freshStore.profiles[profileId]) {
+        return false;
+      }
+      freshStore.usageStats = freshStore.usageStats ?? {};
+      const pStats = freshStore.usageStats[profileId] = freshStore.usageStats[profileId] ?? {};
+      pStats.models = pStats.models ?? {};
+      const mStats = pStats.models[modelId] ?? {};
+      const nextError = (mStats.errorCount ?? 0) + 1;
+      const backoffMs = calculateAuthProfileCooldownMs(nextError);
+      pStats.models[modelId] = {
+        ...mStats,
+        errorCount: nextError,
+        cooldownUntil: Date.now() + backoffMs,
+        lastFailureAt: Date.now(),
+      };
+      return true;
+    };
+
+    const updated = await updateAuthProfileStoreWithLock({ agentDir, updater });
+    if (updated) {
+      store.usageStats = updated.usageStats;
+      return;
+    }
+    updater(store);
+    saveAuthProfileStore(store, agentDir);
+    return;
+  }
+
+  // Original logic for non-rate_limit or no modelId
   const updated = await updateAuthProfileStoreWithLock({
     agentDir,
     updater: (freshStore) => {

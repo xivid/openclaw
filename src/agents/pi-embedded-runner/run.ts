@@ -269,7 +269,7 @@ export async function runEmbeddedPiAgent(
         let nextIndex = profileIndex + 1;
         while (nextIndex < profileCandidates.length) {
           const candidate = profileCandidates[nextIndex];
-          if (candidate && isProfileInCooldown(authStore, candidate)) {
+          if (candidate && isProfileInCooldown(authStore, candidate, modelId)) {
             nextIndex += 1;
             continue;
           }
@@ -295,7 +295,7 @@ export async function runEmbeddedPiAgent(
           if (
             candidate &&
             candidate !== lockedProfileId &&
-            isProfileInCooldown(authStore, candidate)
+            isProfileInCooldown(authStore, candidate, modelId)
           ) {
             profileIndex += 1;
             continue;
@@ -518,6 +518,7 @@ export async function runEmbeddedPiAgent(
                 reason: promptFailoverReason,
                 cfg: params.config,
                 agentDir: params.agentDir,
+                modelId,
               });
             }
             if (
@@ -606,6 +607,7 @@ export async function runEmbeddedPiAgent(
                 reason,
                 cfg: params.config,
                 agentDir: params.agentDir,
+                modelId,
               });
               if (timedOut && !isProbeSession) {
                 log.warn(
