@@ -178,7 +178,34 @@ function buildUsageWindows(opts: {
     }
 
     // Sort by usage (highest first) and take top 10
-    modelWindows.sort((a, b) => b.usedPercent - a.usedPercent);
+    modelWindows.sort((a, b) => {
+      // If usage differs significantly (>1%), sort by usage
+      if (Math.abs(b.usedPercent - a.usedPercent) > 1) {
+        return b.usedPercent - a.usedPercent;
+      }
+
+      // Usage is similar; apply heuristics
+      const aLower = a.label.toLowerCase();
+      const bLower = b.label.toLowerCase();
+
+      // Deprioritize image models
+      const aIsImage = aLower.includes("image");
+      const bIsImage = bLower.includes("image");
+      if (aIsImage !== bIsImage) {
+        return aIsImage ? 1 : -1;
+      }
+
+      // Prioritize known text model keywords
+      const getScore = (label: string) => {
+        if (label.includes("high")) return 4;
+        if (label.includes("opus")) return 3;
+        if (label.includes("sonnet")) return 3;
+        if (label.includes("pro")) return 2;
+        if (label.includes("flash")) return 1;
+        return 0;
+      };
+      return getScore(bLower) - getScore(aLower);
+    });
     const topModels = modelWindows.slice(0, 10);
     logDebug(
       `[antigravity] Built ${topModels.length} model windows from ${opts.modelQuotas.size} total models`,

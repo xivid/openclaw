@@ -383,6 +383,22 @@ export function createSessionStatusTool(opts?: {
           });
           const snapshot = usageSummary.providers.find((entry) => entry.provider === usageProvider);
           if (snapshot) {
+            // Prioritize the current session's model in the usage list if available
+            const currentModelRef = resolved.entry.modelOverride?.trim() || configured.model;
+            const modelSimple = currentModelRef.split("/").pop();
+
+            if (modelSimple && snapshot.windows.length > 0) {
+              const targetIndex = snapshot.windows.findIndex(
+                (w) => w.label === modelSimple || w.label === currentModelRef,
+              );
+
+              if (targetIndex > 0) {
+                // Move it to the front
+                const [target] = snapshot.windows.splice(targetIndex, 1);
+                snapshot.windows.unshift(target);
+              }
+            }
+
             const formatted = formatUsageWindowSummary(snapshot, {
               now: Date.now(),
               maxWindows: 2,
